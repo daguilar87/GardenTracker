@@ -6,6 +6,8 @@ from flask_jwt_extended import (
 )
 from datetime import datetime
 from .models import db, User, Plant, UserPlant
+import requests
+from json import JSONEncoder
 
 api = Blueprint("api", __name__)
 
@@ -135,3 +137,42 @@ def delete_user_plant(user_plant_id):
     db.session.delete(plant)
     db.session.commit()
     return jsonify({"message": "Plant deleted!"}), 200
+
+#Zipcodes for user zones
+@api.route("/update-zip", methods=["POST"])
+@jwt_required()
+def update_zip():
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        zip_code = data.get("zip_code")
+
+        # Get USDA zone from ZIP
+        try:
+            res = requests.get(f"https://phzmapi.org/{zip_code}.json")
+            zone = res.json().get("zone")
+        except:
+            return jsonify({"error": "Failed to fetch zone"}), 400
+
+        if not zone:
+            return jsonify({"error": "Invalid ZIP"}), 400
+
+        # Update user
+        user = User.query.get(user_id)
+        user.zip_code = zip_code
+        user.zone = zone
+        db.session.commit()
+
+        return jsonify({"zone": zone})
+
+@api.route("/planting-info/<plant_name>", methods=["GET"])
+@jwt_required()
+def planting_info(plant_name):
+    zone = request.args.get("zone")
+    with open("planting_calendar.json") as f:
+        calendar = json.load(f)
+
+    info = calendar.get(plant_name, {}).get(zone)
+    if not info:
+        return jsonify({"error": "No info found"}), 404
+
+    return jsonify(info)
