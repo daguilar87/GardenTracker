@@ -8,8 +8,19 @@ from datetime import datetime
 from .models import db, User, Plant, UserPlant
 import requests
 from json import JSONEncoder
+from flask_jwt_extended.exceptions import JWTExtendedException
+from flask import jsonify
+import os
+import json
 
 api = Blueprint("api", __name__)
+
+
+
+@api.errorhandler(JWTExtendedException)
+def handle_jwt_errors(e):
+    return jsonify({"error": str(e)}), 422
+
 
 # Health check
 @api.route("/", methods=["GET"])
@@ -55,8 +66,10 @@ def login():
     if not user or not user.check_password(password):
         return jsonify({"error": "Invalid credentials"}), 401
 
-    access_token = create_access_token(identity=user.id)
+    # Convert user.id to string here:
+    access_token = create_access_token(identity=str(user.id))
     return jsonify({"token": access_token, "username": user.username})
+
 
 # Auth test
 @api.route("/protected", methods=["GET"])
@@ -138,41 +151,67 @@ def delete_user_plant(user_plant_id):
     db.session.commit()
     return jsonify({"message": "Plant deleted!"}), 200
 
-#Zipcodes for user zones
 @api.route("/update-zip", methods=["POST"])
 @jwt_required()
 def update_zip():
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        zip_code = data.get("zip_code")
+    import sys
+    print("✅ Reached /update-zip", file=sys.stderr)
 
-        # Get USDA zone from ZIP
-        try:
-            res = requests.get(f"https://phzmapi.org/{zip_code}.json")
-            zone = res.json().get("zone")
-        except:
-            return jsonify({"error": "Failed to fetch zone"}), 400
+    # Attempt to parse JSON safely
+    data = request.get_json(silent=True)
+    print("📦 Raw JSON received:", data, file=sys.stderr)
 
-        if not zone:
-            return jsonify({"error": "Invalid ZIP"}), 400
+    if not data:
+        return jsonify({"error": "No JSON data received"}), 400
 
-        # Update user
-        user = User.query.get(user_id)
-        user.zip_code = zip_code
-        user.zone = zone
-        db.session.commit()
+    zip_code = data.get("zip_code")
+    print("📬 ZIP received:", zip_code, file=sys.stderr)
 
-        return jsonify({"zone": zone})
+    if not zip_code or not zip_code.isdigit() or len(zip_code) != 5:
+        print("🚫 Invalid ZIP code:", zip_code, file=sys.stderr)
+        return jsonify({"error": "Invalid or missing ZIP code"}), 400
+
+    try:
+        res = requests.get(f"https://phzmapi.org/{zip_code}.json", timeout=5)
+        res.raise_for_status()
+        zone = res.json().get("zone")
+        print("🌎 Zone fetched:", zone, file=sys.stderr)
+    except Exception as e:
+        print("❌ Zone API failed:", e, file=sys.stderr)
+        return jsonify({"error": "Failed to fetch zone"}), 500
+
+    if not zone:
+        return jsonify({"error": "Zone not found for ZIP"}), 404
+
+    # Save to DB
+    from .models import User
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    user.zip_code = zip_code
+    user.zone = zone
+    db.session.commit()
+
+    print("✅ Zone saved successfully", file=sys.stderr)
+    return jsonify({"zone": zone})
+
 
 @api.route("/planting-info/<plant_name>", methods=["GET"])
 @jwt_required()
 def planting_info(plant_name):
     zone = request.args.get("zone")
-    with open("planting_calendar.json") as f:
-        calendar = json.load(f)
+    print(f"🌱 Requested: plant={plant_name}, zone={zone}")
+
+    try:
+        file_path = os.path.join(os.path.dirname(__file__), "static", "planting_calendar.json")
+        with open(file_path) as f:
+            calendar = json.load(f)
+    except Exception as e:
+        print("❌ Error loading JSON:", e)
+        return jsonify({"error": "Failed to load planting calendar"}), 500
 
     info = calendar.get(plant_name, {}).get(zone)
     if not info:
-        return jsonify({"error": "No info found"}), 404
+        return jsonify({"error": f"No timeline found for {plant_name} in zone {zone}"}), 404
 
     return jsonify(info)
+

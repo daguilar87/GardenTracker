@@ -1,5 +1,3 @@
-# app/models.py
-
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
@@ -13,7 +11,6 @@ class User(db.Model):
     user_plants = db.relationship('UserPlant', backref='user', lazy=True)
     zip_code = db.Column(db.String(10))        
     zone = db.Column(db.String(10)) 
-
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
