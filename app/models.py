@@ -24,7 +24,8 @@ class Plant(db.Model):
     name = db.Column(db.String(100), nullable=False)             
     species = db.Column(db.String(100))                           
     sunlight = db.Column(db.String(50))                           
-    watering = db.Column(db.String(50))                           
+    watering = db.Column(db.String(50))
+    growth_days = db.Column(db.Integer)                           
 
 
 class UserPlant(db.Model):
