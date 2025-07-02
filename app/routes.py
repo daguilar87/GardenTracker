@@ -13,7 +13,6 @@ import json
 
 api = Blueprint("api", __name__)
 
-
 @api.errorhandler(JWTExtendedException)
 def handle_jwt_errors(e):
     return jsonify({"error": str(e)}), 422
@@ -125,16 +124,20 @@ def protected():
     return jsonify({"message": f"Hello user {user_id}, you are authenticated!"})
 
 
-#  Get logged-in user info
+# ✅ Get logged-in user info (unique endpoint)
 @api.route("/me", methods=["GET"])
 @jwt_required()
 def get_current_user():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
-    return jsonify({"username": user.username})
+    return jsonify({
+        "username": user.username,
+        "zone": user.zone,
+        "zip_code": user.zip_code
+    })
 
 
-#  Add plant to user portfolio
+# Add plant to user portfolio
 @api.route("/user/plants", methods=["POST"])
 @jwt_required()
 def add_user_plant():
@@ -153,7 +156,7 @@ def add_user_plant():
     return jsonify({"message": "Plant added to your portfolio!"}), 201
 
 
-#  Update user plant notes
+# Update user plant notes
 @api.route("/user/plants/<int:user_plant_id>", methods=["PUT"])
 @jwt_required()
 def update_user_plant(user_plant_id):
@@ -169,7 +172,7 @@ def update_user_plant(user_plant_id):
     return jsonify({"message": "Plant updated!"}), 200
 
 
-#  Delete a plant from user portfolio
+# Delete a plant from user portfolio
 @api.route("/user/plants/<int:user_plant_id>", methods=["DELETE"])
 @jwt_required()
 def delete_user_plant(user_plant_id):
@@ -184,7 +187,7 @@ def delete_user_plant(user_plant_id):
     return jsonify({"message": "Plant deleted!"}), 200
 
 
-#  Update ZIP code and zone
+# Update ZIP code and zone
 @api.route("/update-zip", methods=["POST"])
 @jwt_required()
 def update_zip():
