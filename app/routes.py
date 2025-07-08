@@ -137,48 +137,40 @@ def get_current_user():
     })
 
 
-# Add plant to user portfolio
-@api.route("/user/plants", methods=["POST"])
+@api.route("/user/plants/<int:user_plant_id>", methods=["PUT"])
 @jwt_required()
-def add_user_plant():
+def update_user_plant(user_plant_id):
     data = request.get_json()
     user_id = get_jwt_identity()
 
-    plant_id = data.get("plant_id")
-    plant_name = data.get("plant_name")
+    plant_record = UserPlant.query.filter_by(id=user_plant_id, user_id=user_id).first()
+    if not plant_record:
+        return jsonify({"error": "Plant not found"}), 404
 
-    if not plant_id and not plant_name:
-        return jsonify({"error": "Missing plant_id or plant_name"}), 400
+    if "notes" in data:
+        plant_record.notes = data["notes"]
+    if "date_planted" in data:
+        try:
+            plant_record.date_planted = datetime.strptime(data["date_planted"], "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"error": "Invalid date format"}), 400
 
-    # If it's a custom plant name
-    if plant_name:
-        existing = Plant.query.filter_by(name=plant_name).first()
-        if existing:
-            plant_id = existing.id
-        else:
-            new_plant = Plant(name=plant_name)
-            db.session.add(new_plant)
-            db.session.commit()
-            plant_id = new_plant.id
+    if "plant_name" in data:
+        name = data["plant_name"].strip().capitalize()
 
-    try:
-        planting_date = datetime.strptime(data["planting_date"], "%Y-%m-%d")
-    except (KeyError, ValueError):
-        return jsonify({"error": "Invalid or missing planting_date"}), 400
+    
+        plant = Plant.query.filter_by(name=name).first()
+        if not plant:
+            plant = Plant(name=name)
+            db.session.add(plant)
+            db.session.flush()  
 
-    notes = data.get("notes", "")
+        plant_record.plant_id = plant.id
 
-    new_user_plant = UserPlant(
-        user_id=user_id,
-        plant_id=plant_id,
-        date_planted=planting_date,
-        notes=notes
-    )
-
-    db.session.add(new_user_plant)
     db.session.commit()
+    return jsonify({"message": "Plant updated!"}), 200
 
-    return jsonify({"message": "Plant added to your garden!"}), 201
+
 
 
 
