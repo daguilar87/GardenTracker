@@ -144,16 +144,42 @@ def add_user_plant():
     data = request.get_json()
     user_id = get_jwt_identity()
 
-    new_plant = UserPlant(
+    plant_id = data.get("plant_id")
+    plant_name = data.get("plant_name")
+
+    if not plant_id and not plant_name:
+        return jsonify({"error": "Missing plant_id or plant_name"}), 400
+
+    # If it's a custom plant name
+    if plant_name:
+        existing = Plant.query.filter_by(name=plant_name).first()
+        if existing:
+            plant_id = existing.id
+        else:
+            new_plant = Plant(name=plant_name)
+            db.session.add(new_plant)
+            db.session.commit()
+            plant_id = new_plant.id
+
+    try:
+        planting_date = datetime.strptime(data["planting_date"], "%Y-%m-%d")
+    except (KeyError, ValueError):
+        return jsonify({"error": "Invalid or missing planting_date"}), 400
+
+    notes = data.get("notes", "")
+
+    new_user_plant = UserPlant(
         user_id=user_id,
-        plant_id=data["plant_id"],
-        date_planted=datetime.strptime(data["planting_date"], "%Y-%m-%d"),
-        notes=data.get("notes", "")
+        plant_id=plant_id,
+        date_planted=planting_date,
+        notes=notes
     )
 
-    db.session.add(new_plant)
+    db.session.add(new_user_plant)
     db.session.commit()
-    return jsonify({"message": "Plant added to your portfolio!"}), 201
+
+    return jsonify({"message": "Plant added to your garden!"}), 201
+
 
 
 # Update user plant notes
