@@ -1,12 +1,10 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
-    create_access_token,
-    jwt_required,
-    get_jwt_identity
+    create_access_token, jwt_required, get_jwt_identity
 )
-from datetime import datetime
-from .models import db, User, Plant, UserPlant
 from flask_jwt_extended.exceptions import JWTExtendedException
+from datetime import datetime, timedelta
+from .models import db, User, Plant, UserPlant
 import requests
 import os
 import json
@@ -17,59 +15,125 @@ api = Blueprint("api", __name__)
 def handle_jwt_errors(e):
     return jsonify({"error": str(e)}), 422
 
-
-# Health check
 @api.route("/", methods=["GET"])
 def home():
     return jsonify({"message": "Garden Tracker API is live!"})
 
-
-# Get all plants saved by user
+# ✅ Get all user plants 
 @api.route("/user/plants", methods=["GET"])
 @jwt_required()
 def get_user_plants():
     user_id = get_jwt_identity()
-    user_plants = UserPlant.query.filter_by(user_id=user_id).all()
-
-    results = []
-    for up in user_plants:
-        plant = up.plant
-        growth_days = getattr(plant, "growth_days", 0)
-        date_planted = up.date_planted.strftime("%Y-%m-%d") if up.date_planted else None
-
-        results.append({
-            "id": up.id,
-            "plant_id": plant.id,
-            "plant_name": plant.name,
-            "growth_days": growth_days,
-            "date_planted": date_planted,
-            "notes": up.notes,
-        })
-
-    return jsonify(results), 200
-
-
-# Get static or database plants
-@api.route("/plants", methods=["GET"])
-def get_plants():
-    plants = Plant.query.all()
-    results = [{"id": p.id, "name": p.name} for p in plants]
-    return jsonify(results)
-
-
-# Timeline info + growth_days
-@api.route("/planting-info/<plant_name>", methods=["GET"])
-@jwt_required()
-def planting_info(plant_name):
-    zone = request.args.get("zone")
-    print(f"🌱 Requested: plant={plant_name}, zone={zone}")
+    user = User.query.get(user_id)
+    zone = user.zone
 
     try:
         file_path = os.path.join(os.path.dirname(__file__), "static", "planting_calendar.json")
         with open(file_path) as f:
             calendar = json.load(f)
-    except Exception as e:
-        print("❌ Error loading JSON:", e)
+    except Exception:
+        calendar = {}
+
+    user_plants = UserPlant.query.filter_by(user_id=user_id).join(Plant).order_by(UserPlant.date_planted.asc()).all()
+
+    results = []
+    for up in user_plants:
+        plant = up.plant
+        name = plant.name
+        growth_days = plant.growth_days or 0
+        planting_info = calendar.get(name, {}).get(zone, {})
+
+        expected_harvest = None
+        if up.date_planted and growth_days:
+            expected_harvest = (up.date_planted + timedelta(days=growth_days)).strftime("%Y-%m-%d")
+
+        results.append({
+            "id": up.id,
+            "plant_name": name,
+            "nickname": up.nickname,
+            "growth_days": growth_days,
+            "date_planted": up.date_planted.strftime("%Y-%m-%d") if up.date_planted else None,
+            "notes": up.notes,
+            "timeline": planting_info,
+            "expected_harvest": expected_harvest
+        })
+
+    return jsonify(results), 200
+
+#  Add plant to user garden 
+@api.route("/user/plants", methods=["POST"])
+@jwt_required()
+def add_user_plant():
+    data = request.get_json()
+    user_id = get_jwt_identity()
+
+    planting_date = data.get("planting_date")
+    notes = data.get("notes", "")
+    plant_id = data.get("plant_id")
+    plant_name = data.get("plant_name")
+
+    if not planting_date or (not plant_id and not plant_name):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    try:
+        planting_date_obj = datetime.strptime(planting_date, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "Invalid date format"}), 400
+
+    # Use existing plant by ID
+    if plant_id:
+        plant = Plant.query.get(plant_id)
+        if not plant:
+            return jsonify({"error": "Plant not found"}), 404
+        name = plant.name
+
+    # Or add/find custom plant by name
+    elif plant_name:
+        name = plant_name.strip().title()
+        plant = Plant.query.filter_by(name=name).first()
+        if not plant:
+            plant = Plant(name=name)
+            db.session.add(plant)
+            db.session.commit()
+
+    
+    existing = UserPlant.query.filter_by(user_id=user_id).join(Plant).filter(Plant.name == name).all()
+    if existing:
+        nickname = f"{name} (Batch {len(existing)+1})"
+    else:
+        nickname = name
+
+    new_user_plant = UserPlant(
+        user_id=user_id,
+        plant_id=plant.id,
+        nickname=nickname,
+        date_planted=planting_date_obj,
+        notes=notes
+    )
+
+    db.session.add(new_user_plant)
+    db.session.commit()
+
+    return jsonify({"message": "Plant added to your garden!"}), 201
+
+#  Get all available plants from DB
+@api.route("/plants", methods=["GET"])
+def get_plants():
+    plants = Plant.query.all()
+    return jsonify([{"id": p.id, "name": p.name} for p in plants])
+
+#  Get planting timeline and growth days if available
+@api.route("/planting-info/<plant_name>", methods=["GET"])
+@jwt_required()
+def planting_info(plant_name):
+    zone = request.args.get("zone")
+    plant_name = plant_name.strip().title()
+
+    try:
+        file_path = os.path.join(os.path.dirname(__file__), "static", "planting_calendar.json")
+        with open(file_path) as f:
+            calendar = json.load(f)
+    except Exception:
         return jsonify({"error": "Failed to load planting calendar"}), 500
 
     info = calendar.get(plant_name, {}).get(zone)
@@ -77,13 +141,35 @@ def planting_info(plant_name):
         return jsonify({"error": f"No timeline found for {plant_name} in zone {zone}"}), 404
 
     plant = Plant.query.filter_by(name=plant_name).first()
-    growth_days = plant.growth_days if plant else None
-    info["growth_days"] = growth_days
+    info["growth_days"] = plant.growth_days if plant else None
 
     return jsonify(info)
 
+#  Update ZIP code and zone
+@api.route("/update-zip", methods=["POST"])
+@jwt_required()
+def update_zip():
+    data = request.get_json()
+    zip_code = data.get("zip_code")
 
-# Register
+    if not zip_code or not zip_code.isdigit() or len(zip_code) != 5:
+        return jsonify({"error": "Invalid ZIP code"}), 400
+
+    try:
+        res = requests.get(f"https://phzmapi.org/{zip_code}.json", timeout=5)
+        res.raise_for_status()
+        zone = res.json().get("zone")
+    except:
+        return jsonify({"error": "Failed to fetch zone"}), 500
+
+    user = User.query.get(get_jwt_identity())
+    user.zip_code = zip_code
+    user.zone = zone
+    db.session.commit()
+
+    return jsonify({"zone": zone})
+
+#  Auth: Register
 @api.route("/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -97,11 +183,9 @@ def register():
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
-
     return jsonify({"message": "User registered successfully"})
 
-
-# Login
+#  Auth: Login
 @api.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -115,28 +199,18 @@ def login():
     access_token = create_access_token(identity=str(user.id))
     return jsonify({"token": access_token, "username": user.username})
 
-
-# Test Auth
-@api.route("/protected", methods=["GET"])
-@jwt_required()
-def protected():
-    user_id = get_jwt_identity()
-    return jsonify({"message": f"Hello user {user_id}, you are authenticated!"})
-
-
-# ✅ Get logged-in user info (unique endpoint)
+#  Get user info
 @api.route("/me", methods=["GET"])
 @jwt_required()
 def get_current_user():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    user = User.query.get(get_jwt_identity())
     return jsonify({
         "username": user.username,
         "zone": user.zone,
         "zip_code": user.zip_code
     })
 
-
+#  Update a user plant (plant, notes, or date)
 @api.route("/user/plants/<int:user_plant_id>", methods=["PUT"])
 @jwt_required()
 def update_user_plant(user_plant_id):
@@ -154,88 +228,27 @@ def update_user_plant(user_plant_id):
             plant_record.date_planted = datetime.strptime(data["date_planted"], "%Y-%m-%d")
         except ValueError:
             return jsonify({"error": "Invalid date format"}), 400
-
     if "plant_name" in data:
-        name = data["plant_name"].strip().capitalize()
-
-    
+        name = data["plant_name"].strip().title()
         plant = Plant.query.filter_by(name=name).first()
         if not plant:
             plant = Plant(name=name)
             db.session.add(plant)
-            db.session.flush()  
-
+            db.session.flush()
         plant_record.plant_id = plant.id
 
     db.session.commit()
-    return jsonify({"message": "Plant updated!"}), 200
+    return jsonify({"message": "Plant updated!"})
 
-
-
-
-
-# Update user plant notes
-@api.route("/user/plants/<int:user_plant_id>", methods=["PUT"])
-@jwt_required()
-def update_user_plant(user_plant_id):
-    data = request.get_json()
-    user_id = get_jwt_identity()
-
-    plant = UserPlant.query.filter_by(id=user_plant_id, user_id=user_id).first()
-    if not plant:
-        return jsonify({"error": "Plant not found"}), 404
-
-    plant.notes = data.get("notes", plant.notes)
-    db.session.commit()
-    return jsonify({"message": "Plant updated!"}), 200
-
-
-# Delete a plant from user portfolio
+#  Delete user plant
 @api.route("/user/plants/<int:user_plant_id>", methods=["DELETE"])
 @jwt_required()
 def delete_user_plant(user_plant_id):
     user_id = get_jwt_identity()
     plant = UserPlant.query.filter_by(id=user_plant_id, user_id=user_id).first()
-
     if not plant:
         return jsonify({"error": "Plant not found"}), 404
 
     db.session.delete(plant)
     db.session.commit()
-    return jsonify({"message": "Plant deleted!"}), 200
-
-
-# Update ZIP code and zone
-@api.route("/update-zip", methods=["POST"])
-@jwt_required()
-def update_zip():
-    import sys
-    print("✅ Reached /update-zip", file=sys.stderr)
-
-    data = request.get_json(silent=True)
-    print("📦 Raw JSON received:", data, file=sys.stderr)
-
-    if not data:
-        return jsonify({"error": "No JSON data received"}), 400
-
-    zip_code = data.get("zip_code")
-    if not zip_code or not zip_code.isdigit() or len(zip_code) != 5:
-        return jsonify({"error": "Invalid or missing ZIP code"}), 400
-
-    try:
-        res = requests.get(f"https://phzmapi.org/{zip_code}.json", timeout=5)
-        res.raise_for_status()
-        zone = res.json().get("zone")
-    except Exception as e:
-        return jsonify({"error": "Failed to fetch zone"}), 500
-
-    if not zone:
-        return jsonify({"error": "Zone not found for ZIP"}), 404
-
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    user.zip_code = zip_code
-    user.zone = zone
-    db.session.commit()
-
-    return jsonify({"zone": zone})
+    return jsonify({"message": "Plant deleted!"})
