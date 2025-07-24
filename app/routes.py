@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
-    create_access_token, jwt_required, get_jwt_identity
+    create_access_token, create_refresh_token,
+    jwt_required, get_jwt_identity
 )
 from flask_jwt_extended.exceptions import JWTExtendedException
 from datetime import datetime, timedelta
@@ -11,15 +12,26 @@ import json
 
 api = Blueprint("api", __name__)
 
+# Refresh access token using refresh token
+@api.route('/api/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+def refresh():
+    identity = get_jwt_identity()
+    new_token = create_access_token(identity=identity)
+    return jsonify(access_token=new_token), 200
+
+
 @api.errorhandler(JWTExtendedException)
 def handle_jwt_errors(e):
     return jsonify({"error": str(e)}), 422
+
 
 @api.route("/", methods=["GET"])
 def home():
     return jsonify({"message": "Garden Tracker API is live!"})
 
-# ✅ Get all user plants 
+
+# Get all user plants 
 @api.route("/user/plants", methods=["GET"])
 @jwt_required()
 def get_user_plants():
@@ -60,7 +72,8 @@ def get_user_plants():
 
     return jsonify(results), 200
 
-#  Add plant to user garden 
+
+# Add plant to user garden 
 @api.route("/user/plants", methods=["POST"])
 @jwt_required()
 def add_user_plant():
@@ -96,7 +109,6 @@ def add_user_plant():
             db.session.add(plant)
             db.session.commit()
 
-    
     existing = UserPlant.query.filter_by(user_id=user_id).join(Plant).filter(Plant.name == name).all()
     if existing:
         nickname = f"{name} (Batch {len(existing)+1})"
@@ -116,13 +128,15 @@ def add_user_plant():
 
     return jsonify({"message": "Plant added to your garden!"}), 201
 
-#  Get all available plants from DB
+
+# Get all available plants from DB
 @api.route("/plants", methods=["GET"])
 def get_plants():
     plants = Plant.query.all()
     return jsonify([{"id": p.id, "name": p.name} for p in plants])
 
-#  Get planting timeline and growth days if available
+
+# Get planting timeline and growth days if available
 @api.route("/planting-info/<plant_name>", methods=["GET"])
 @jwt_required()
 def planting_info(plant_name):
@@ -145,7 +159,8 @@ def planting_info(plant_name):
 
     return jsonify(info)
 
-#  Update ZIP code and zone
+
+# Update ZIP code and zone
 @api.route("/update-zip", methods=["POST"])
 @jwt_required()
 def update_zip():
@@ -169,7 +184,8 @@ def update_zip():
 
     return jsonify({"zone": zone})
 
-#  Auth: Register
+
+# Auth: Register
 @api.route("/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -185,7 +201,8 @@ def register():
     db.session.commit()
     return jsonify({"message": "User registered successfully"})
 
-#  Auth: Login
+
+# Auth: Login - returns access + refresh tokens
 @api.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -197,9 +214,16 @@ def login():
         return jsonify({"error": "Invalid credentials"}), 401
 
     access_token = create_access_token(identity=str(user.id))
-    return jsonify({"token": access_token, "username": user.username})
+    refresh_token = create_refresh_token(identity=str(user.id))
 
-#  Get user info
+    return jsonify({
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "username": user.username
+    })
+
+
+# Get current user info
 @api.route("/me", methods=["GET"])
 @jwt_required()
 def get_current_user():
@@ -210,7 +234,8 @@ def get_current_user():
         "zip_code": user.zip_code
     })
 
-#  Update a user plant (plant, notes, or date)
+
+# Update a user plant (plant, notes, or date)
 @api.route("/user/plants/<int:user_plant_id>", methods=["PUT"])
 @jwt_required()
 def update_user_plant(user_plant_id):
@@ -240,7 +265,8 @@ def update_user_plant(user_plant_id):
     db.session.commit()
     return jsonify({"message": "Plant updated!"})
 
-#  Delete user plant
+
+# Delete user plant
 @api.route("/user/plants/<int:user_plant_id>", methods=["DELETE"])
 @jwt_required()
 def delete_user_plant(user_plant_id):
