@@ -3,6 +3,7 @@ from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from dotenv import load_dotenv
+from app.utils.sync_calendar import sync_plants_from_calendar
 import os
 
 jwt = JWTManager()
@@ -24,5 +25,6 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        sync_plants_from_calendar()
 
     return app
