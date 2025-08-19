@@ -5,6 +5,7 @@ from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate   
 from dotenv import load_dotenv
 import os
+from .sync_calendar import sync_plants_from_calendar  
 
 jwt = JWTManager()
 migrate = Migrate() 
@@ -16,6 +17,10 @@ def create_app():
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "default-secret")
     app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")  # <-- use Neon
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+    with app.app_context():
+        db.create_all()
+        sync_plants_from_calendar() 
 
     CORS(app)
     jwt.init_app(app)
