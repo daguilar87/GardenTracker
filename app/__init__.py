@@ -24,7 +24,7 @@ def create_app():
     migrate.init_app(app, db)
 
     with app.app_context():
-        # Run migrations if you want them applied automatically:
+        # Run migrations if you want them applied automatically// if dropping database and starting new migration comment out this function:
         from flask_migrate import upgrade
         upgrade()
 

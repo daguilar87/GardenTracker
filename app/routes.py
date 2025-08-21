@@ -37,7 +37,7 @@ def home():
 def get_user_plants():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
-    zone = user.zone
+    zone = user.zone.lower() if user.zone else None
 
     try:
         file_path = os.path.join(os.path.dirname(__file__), "static", "planting_calendar.json")
@@ -53,7 +53,25 @@ def get_user_plants():
         plant = up.plant
         name = plant.name
         growth_days = plant.growth_days or 0
-        planting_info = calendar.get(name, {}).get(zone, {})
+
+        # Get the raw zone data from calendar
+        raw_zone_info = calendar.get(name, {}).get(zone)
+        if raw_zone_info:
+            timeline = {
+                "zones": {
+                    zone: {
+                        "start_month": raw_zone_info.get("start"),
+                        "end_month": raw_zone_info.get("end"),
+                        "growth_days": growth_days
+                    }
+                },
+                "average_days_to_harvest": growth_days
+            }
+        else:
+            timeline = {
+                "zones": {},
+                "average_days_to_harvest": growth_days
+            }
 
         expected_harvest = None
         if up.date_planted and growth_days:
@@ -66,11 +84,12 @@ def get_user_plants():
             "growth_days": growth_days,
             "date_planted": up.date_planted.strftime("%Y-%m-%d") if up.date_planted else None,
             "notes": up.notes,
-            "timeline": planting_info,
+            "timeline": timeline,
             "expected_harvest": expected_harvest
         })
 
     return jsonify(results), 200
+
 
 
 # Add plant to user garden 
@@ -141,8 +160,13 @@ def get_plants():
 @jwt_required()
 def planting_info(plant_name):
     zone = request.args.get("zone")
-    plant_name = plant_name.strip().title()
+    if not zone:
+        return jsonify({"error": "Zone not provided"}), 400
 
+    plant_name = plant_name.strip().title()
+    zone = zone.strip().lower()
+
+   
     try:
         file_path = os.path.join(os.path.dirname(__file__), "static", "planting_calendar.json")
         with open(file_path) as f:
@@ -150,14 +174,37 @@ def planting_info(plant_name):
     except Exception:
         return jsonify({"error": "Failed to load planting calendar"}), 500
 
-    info = calendar.get(plant_name, {}).get(zone)
-    if not info:
-        return jsonify({"error": f"No timeline found for {plant_name} in zone {zone}"}), 404
+    plant_data = calendar.get(plant_name)
+    if not plant_data:
+        return jsonify({"error": f"No data found for {plant_name}"}), 404
 
+   
+    zone_match = None
+    for z in plant_data.keys():
+        if z.lower() == zone:
+            zone_match = z
+            break
+    
+    if not zone_match:
+        zone_match = next(iter(plant_data.keys()), None)
+        if not zone_match:
+            return jsonify({"error": f"No timeline found for {plant_name}"}), 404
+
+    info = plant_data[zone_match]
+
+   
     plant = Plant.query.filter_by(name=plant_name).first()
-    info["growth_days"] = plant.growth_days if plant else None
+    growth_days = plant.growth_days if plant else None
 
-    return jsonify(info)
+    response = {
+        "zones": { zone_match: { "start_month": info.get("start"), "end_month": info.get("end") } },
+        "average_days_to_harvest": growth_days
+    }
+
+    return jsonify(response)
+
+
+
 
 
 # Update ZIP code and zone
