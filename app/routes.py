@@ -31,7 +31,7 @@ def home():
     return jsonify({"message": "Garden Tracker API is live!"})
 
 
-# Get all user plants 
+# Get all user plants
 @api.route("/user/plants", methods=["GET"])
 @jwt_required()
 def get_user_plants():
@@ -39,6 +39,7 @@ def get_user_plants():
     user = User.query.get(user_id)
     zone = user.zone.lower() if user.zone else None
 
+    
     try:
         file_path = os.path.join(os.path.dirname(__file__), "static", "planting_calendar.json")
         with open(file_path) as f:
@@ -52,29 +53,21 @@ def get_user_plants():
     for up in user_plants:
         plant = up.plant
         name = plant.name
-        growth_days = plant.growth_days or 0
 
-        # Get the raw zone data from calendar
-        raw_zone_info = calendar.get(name, {}).get(zone)
-        if raw_zone_info:
-            timeline = {
-                "zones": {
-                    zone: {
-                        "start_month": raw_zone_info.get("start"),
-                        "end_month": raw_zone_info.get("end"),
-                        "growth_days": growth_days
-                    }
-                },
-                "average_days_to_harvest": growth_days
-            }
-        else:
-            timeline = {
-                "zones": {},
-                "average_days_to_harvest": growth_days
-            }
+        
+        growth_days = plant.growth_days or calendar.get(name, {}).get("average_days_to_harvest")
 
+        raw_zone_info = calendar.get(name, {}).get(zone, {})
+        timeline = {
+            "start_month": raw_zone_info.get("start"),
+            "end_month": raw_zone_info.get("end")
+        }
+
+        days_remaining = None
         expected_harvest = None
         if up.date_planted and growth_days:
+            days_since_planting = (datetime.utcnow().date() - up.date_planted).days
+            days_remaining = growth_days - days_since_planting
             expected_harvest = (up.date_planted + timedelta(days=growth_days)).strftime("%Y-%m-%d")
 
         results.append({
@@ -85,6 +78,7 @@ def get_user_plants():
             "date_planted": up.date_planted.strftime("%Y-%m-%d") if up.date_planted else None,
             "notes": up.notes,
             "timeline": timeline,
+            "days_remaining": days_remaining,
             "expected_harvest": expected_harvest
         })
 
@@ -112,14 +106,14 @@ def add_user_plant():
     except ValueError:
         return jsonify({"error": "Invalid date format"}), 400
 
-    # Use existing plant by ID
+    
     if plant_id:
         plant = Plant.query.get(plant_id)
         if not plant:
             return jsonify({"error": "Plant not found"}), 404
         name = plant.name
 
-    # Or add/find custom plant by name
+    
     elif plant_name:
         name = plant_name.strip().title()
         plant = Plant.query.filter_by(name=name).first()
