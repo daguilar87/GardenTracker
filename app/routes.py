@@ -106,15 +106,12 @@ def add_user_plant():
     except ValueError:
         return jsonify({"error": "Invalid date format"}), 400
 
-    
     if plant_id:
         plant = Plant.query.get(plant_id)
         if not plant:
             return jsonify({"error": "Plant not found"}), 404
         name = plant.name
-
-    
-    elif plant_name:
+    else:
         name = plant_name.strip().title()
         plant = Plant.query.filter_by(name=name).first()
         if not plant:
@@ -139,7 +136,20 @@ def add_user_plant():
     db.session.add(new_user_plant)
     db.session.commit()
 
-    return jsonify({"message": "Plant added to your garden!"}), 201
+    
+    response = {
+        "id": new_user_plant.id,
+        "plant_name": name,
+        "nickname": nickname,
+        "date_planted": planting_date,
+        "notes": notes,
+        "growth_days": plant.growth_days,
+        "expected_harvest": (planting_date_obj + timedelta(days=plant.growth_days)).strftime("%Y-%m-%d") if plant.growth_days else None,
+    }
+
+    return jsonify(response), 201
+
+
 
 
 # Get all available plants from DB
