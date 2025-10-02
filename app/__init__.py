@@ -3,7 +3,6 @@ from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate
-from dotenv import load_dotenv
 import os
 from .utils.sync_calendar import sync_plants_from_calendar
 
@@ -11,11 +10,11 @@ jwt = JWTManager()
 migrate = Migrate()
 
 def create_app():
-    load_dotenv()
-
     app = Flask(__name__)
-    app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "default-secret")
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")  # Neon DB
+
+    # Use environment variables; no .env needed on Fly
+    app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY", "default-secret")
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")  # Neon DB
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     CORS(app)
@@ -24,7 +23,7 @@ def create_app():
     migrate.init_app(app, db)
 
     with app.app_context():
-        # Run migrations if you want them applied automatically// if dropping database and starting new migration comment out this function:
+        # Run migrations if you want them applied
         from flask_migrate import upgrade
         upgrade()
 
